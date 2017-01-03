@@ -2,3 +2,151 @@
 
 use strict;
 use warnings;
+
+use Getopt::Long;       # rpm: perl-Getopt-Long
+use File::Basename;     # rpm: perl
+
+use constant SSH_CONFIG  => "$ENV{'HOME'}/.ssh/config";
+use constant ALL_TARGETS => '__ALL__';
+
+sub usage {
+    my $self = basename($0);
+    my $message = shift;
+
+    $message and print "$message\n\n";
+    print <<"END_MESSAGE";
+Usage: $self [--file <file>] [--connect [<target>[,<target2>,...]]] [--disconnect [<target>[,<target2>,...]]] [--list] [--mounts] [--verbose] [--help]
+
+    -h          : Display this help message and exit
+    -f <file>   : Use the specified file instead of @{[ SSH_CONFIG ]}
+    -l          : List targets and exit
+    -m          : List mount status and exit
+    -c          : Connect all targets
+    -c <target> : Connect a specific target or a comma-separated list of targets
+    -d          : Disconnect all targets
+    -d <target> : Disconnect a specific target or a comma-separated list of targets
+    -r          : Reconnect all targets
+    -r <target> : Reconnect a specific target or a comma-separated list of targets
+    -v          : Verbose; also implies '-m' after connect/disconnect/reconnect
+END_MESSAGE
+
+    exit 1;
+}
+
+sub read_config {
+    my ($options, $config) = @_;
+
+    die "Not implemented";
+}
+
+sub list_targets {
+    my $config = shift;
+
+    die "Not implemented";
+}
+
+sub list_mounts {
+    my $config = shift;
+
+    die "Not implemented";
+}
+
+sub __connect {
+    my ($options, $config, $list) = @_;
+
+    die "Not implemented";
+}
+
+sub __disconnect {
+    my ($options, $config, $list) = @_;
+
+    die "Not implemented";
+}
+
+sub connect_targets {
+    my ($options, $config) = @_;
+
+    __connect($options, $config, $options->{'connect'});
+}
+
+sub disconnect_targets {
+    my ($options, $config) = @_;
+
+    __disconnect($options, $config, $options->{'disconnect'});
+}
+
+sub reconnect_targets {
+    my ($options, $config) = @_;
+
+    __disconnect($options, $config, $options->{'reconnect'});
+    __connect($options, $config, $options->{'reconnect'});
+}
+
+# ----------------------------------- MAIN ----------------------------------- #
+
+my %options = (
+    help       => undef,
+    file       => undef,
+    list       => undef,
+    mounts     => undef,
+    connect    => undef,
+    disconnect => undef,
+    reconnect  => undef,
+    verbose    => undef,
+);
+my %config;
+
+GetOptions('help'         => \$options{'help'},
+           'file=s'       => \$options{'file'},
+           'list'         => \$options{'list'},
+           'mounts'       => \$options{'mounts'},
+           'connect:s'    => sub {
+               my ($name, $val) = @_;
+               @{ $options{'connect'} } = $val ? split(/,/, $val) : (&ALL_TARGETS);
+            },
+           'disconnect:s' => sub {
+               my ($name, $val) = @_;
+               @{ $options{'disconnect'} } = $val ? split(/,/, $val) : (&ALL_TARGETS);
+            },
+           'reconnect:s'  => sub {
+               my ($name, $val) = @_;
+               @{ $options{'reconnect'} } = $val ? split(/,/, $val) : (&ALL_TARGETS);
+           },
+           'verbose'      => \$options{'verbose'}
+);
+
+$options{'help'} and usage();
+
+$options{'list'} or $options{'mounts'} or $options{'connect'} or
+    $options{'disconnect'} or $options{'reconnect'} or
+    usage("At least one action out of '-l', '-m', '-c', '-d', '-r' is required.");
+
+if ($options{'file'}) {
+    -f $options{'file'} or die "Cannot read '$options{'file'}'";
+
+} else {
+    $options{'file'} = &SSH_CONFIG;
+}
+
+read_config(\%options, \%config);
+
+$options{'list'} and do {
+    list_targets(\%config);
+    exit(0);
+};
+
+$options{'mounts'} and do {
+    list_mounts(\%config);
+    exit(0);
+};
+
+$options{'disconnect'} and disconnect_targets(\%options, \%config);
+
+$options{'connect'} and connect_targets(\%options, \%config);
+
+$options{'reconnect'} and do {
+    disconnect_targets(\%options, \%config);
+    connect_targets(\%options, \%config);
+};
+
+$options{'verbose'} and list_mounts(\%config);
