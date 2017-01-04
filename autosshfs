@@ -110,8 +110,30 @@ sub read_config {
 
 sub list_targets {
     my $config = shift;
+    my $p;
 
-    die "Not implemented yet";
+    foreach my $target (sort keys %$config) {
+        my $name = $target;
+        $target eq &GENERIC_HOST and $name = '*';
+        print "Host '${name}'\n\tSSH options:\r\t\t\t\t";
+
+        $p = 0;
+        foreach my $variable (sort keys %{ $config->{$target} }) {
+            $variable eq 'autosshfs' and next;
+            $p and print "; ";
+            print "$variable $config->{$target}->{$variable}";
+            $p = 1;
+        }
+        print "\n\tautosshfs options:\r\t\t\t\t";
+
+        $p = 0;
+        foreach my $variable (sort keys %{ $config->{$target}->{'autosshfs'} }) {
+            $p and print "; ";
+            print "$variable $config->{$target}->{'autosshfs'}->{$variable}";
+            $p = 1;
+        }
+        print "\n";
+    }
 }
 
 sub list_mounts {
