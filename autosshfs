@@ -3,11 +3,15 @@
 use strict;
 use warnings;
 
-use Getopt::Long;       # rpm: perl-Getopt-Long
-use File::Basename;     # rpm: perl
+use Getopt::Long;                               # rpm: perl-Getopt-Long
+use File::Path          qw /make_path/;         # rpm: perl-File-Path
+use File::Basename;                             # rpm: perl
 
-use constant SSH_CONFIG  => "$ENV{'HOME'}/.ssh/config";
-use constant ALL_TARGETS => '__ALL__';
+use constant SSH_CONFIG      => "$ENV{'HOME'}/.ssh/config";
+use constant ALL_TARGETS     => '__ALL__';
+use constant GENERIC_HOST    => '__GENERIC__';
+use constant GENERIC_BASEDIR => 'autosshfs';
+use constant TCP_TIMEOUT     => 5;
 
 sub usage {
     my $self = basename($0);
@@ -35,36 +39,244 @@ END_MESSAGE
 
 sub read_config {
     my ($options, $config) = @_;
+    my $marker = qr /^\s*#!!!#/;
+    my ($handle, $host);
 
-    die "Not implemented";
+    open($handle, "<", $options->{'file'}) or
+        die "Cannot open '$options->{'file'}' for reading";
+
+    while (<$handle>) {
+        chomp;
+        # skip empty lines and comments not matching autosshfs directives
+        m/^\s*$/ and next;
+        m/^\s*#/ and not m/$marker/ and next;
+
+        m/^\s*Host\s+([^\s]+)\s*$/ and do {
+            $host = $1;
+            $host eq '*' and $host = &GENERIC_HOST;
+            $config->{$host}->{'Host'} = $host;
+            next;
+        };
+
+        m/$marker\s+([^\s]+)\s+(.*)\s*$/ and defined $host and do {
+            $options->{'verbose'} and
+                print STDERR "Host '$host': found autosshfs option line: $_\n";
+            # hash key ($variable) 'Capitalized'
+            my $variable = ucfirst(lc($1));
+            my $value = $2;
+
+            # replace env variables in paths (or standalone) by their values
+            $value =~ m/\$/ and do {
+                my @elements = split("/", $value);
+                foreach (@elements) {
+                    /\$/ or next;
+                    s/\$//;
+                    exists $ENV{$_} and $_ = $ENV{$_};
+                }
+                $value = join("/", @elements);
+            };
+
+            $config->{$host}->{'autosshfs'}->{$variable} = $value;
+            next;
+        };
+
+        m/^\s*([^\s]+)\s+(.*)\s*$/ and defined $host and do {
+            # hash key ($variable) 'Capitalized'
+            my $variable = ucfirst(lc($1));
+            my $value = $2;
+            $config->{$host}->{$variable} = $value;
+            next;
+        };
+    }
+    close($handle);
+
+    defined $config->{&GENERIC_HOST}->{'autosshfs'}->{'Basedir'} or do {
+        $config->{&GENERIC_HOST}->{'autosshfs'}->{'Basedir'} =
+            $ENV{'HOME'} . '/' . &GENERIC_BASEDIR;
+        $config->{'verbose'} and print STDERR "autosshfs variable 'BaseDir' not"
+            . " defined; setting to '"
+            . $config->{&GENERIC_HOST}->{'autosshfs'}->{'Basedir'} . "'\n";
+    };
+
+    defined $config->{&GENERIC_HOST}->{'Permitlocalcommand'} and
+        lc($config->{&GENERIC_HOST}->{'Permitlocalcommand'}) eq 'yes' or do {
+        $config->{'verbose'} and
+            print STDERR "ssh variable 'PermitLocalCommand' not set in 'Host *'"
+            . "; you will not be able to connect autosshfs mounts automatically"
+            . " after a successfull ssh connection via 'LocalCommand'. See 'man"
+            . " ssh_config'.\n";
+    };
 }
 
 sub list_targets {
     my $config = shift;
 
-    die "Not implemented";
+    die "Not implemented yet";
 }
 
 sub list_mounts {
     my $config = shift;
 
-    die "Not implemented";
+    die "Not implemented yet";
+}
+
+sub update_conn_settings {
+    my ($config, $conn_settings, $target) = @_;
+    # SSH options NOT to be added to sshfs command line
+    my @do_not_add = qw / autosshfs Host HostName LocalCommand
+                          LocalForward RemoteForward DynamicForward /;
+    my @def_settings  = qw / -o compression=yes
+                             -o follow_symlinks
+                             -o transform_symlinks
+                             -o reconnect /;
+
+    @$conn_settings = @def_settings;
+
+    defined $config->{'target'} or return;
+
+    # add SSH options
+    foreach my $option (keys %{ $config->{'target'} }) {
+        grep(/\b$option\b/i, @do_not_add) and next;
+        push @$conn_settings,
+            ('-o', $option . '=' . $config->{'target'}->{$option});
+    }
+}
+
+sub mounted {
+    my $target = shift;
+    my $mounted = 0;
+    my $handle;
+
+    open $handle, "<", '/proc/mounts' or die "Cannot access /proc/mounts";
+    while (<$handle>) {
+        if ( m/\@${target}:/ ) {
+            $mounted = 1; last;
+        }
+    }
+    close $handle;
+
+    return $mounted;
+}
+
+sub get_local {
+    my ($config, $target) = @_;
+    my $local;
+
+    $local = $config->{&GENERIC_HOST}->{'autosshfs'}->{'Basedir'} . '/';
+    $local .= (defined $config->{$target}->{'autosshfs'}->{'Localdir'}) ?
+        $config->{$target}->{'autosshfs'}->{'Localdir'} : $target;
+
+    return $local;
+}
+
+sub get_remote {
+    my ($config, $target) = @_;
+    my $remote;
+
+    $remote = $target . ':';
+    defined $config->{$target}->{'User'} and
+        $remote = $config->{$target}->{'User'} . '@' . $remote;
+    $remote .= (defined $config->{$target}->{'autosshfs'}->{'Remotedir'}) ?
+        $config->{$target}->{'autosshfs'}->{'Remotedir'} : '.';
+
+    return $remote;
+}
+
+sub same_arrays {
+    my ($a, $b) = @_;
+    my $equals = 1;
+
+    (@$a != @$b) and return 0;
+
+    foreach (my $i = 0; $i < @$a; $i++) {
+        if (not defined @{$a}[$i] or
+            not defined @{$b}[$i] or
+            "@{$a}[$i]" ne "@{$b}[$i]") {
+
+            $equals = 0;
+            last;
+        }
+    }
+
+	return $equals;
 }
 
 sub __connect {
     my ($options, $config, $list) = @_;
+    my ($remote, $local);
 
-    die "Not implemented";
+    foreach my $target (@$list) {
+        mounted($target) and do {
+            $options->{'verbose'} and
+                print STDERR "autosshfs: ${target} already mounted.\n";
+            next;
+        };
+        $options->{'verbose'} and
+            print STDERR "autosshfs: mounting ${target}...\n";
+
+        my @conn_settings;
+        update_conn_settings($config, \@conn_settings, $target);
+
+        defined $config->{$target} or
+            print STDERR "autosshfs: warning - no config for $target\n";
+
+        $remote = get_remote($config, $target);
+        $local = get_local($config, $target);
+        make_path($local);
+
+        # send sshfs into bg otherwise it blocks when run from ~/.ssh/config
+        system("sshfs " . join(' ', @conn_settings) . " $remote $local &");
+    }
+
+    $options->{'verbose'} or return;
+
+    print STDERR "Waiting " . &TCP_TIMEOUT
+        . "s to allow sshfs mount to complete...\n";
+    # TODO improve this
+    sleep(&TCP_TIMEOUT);
+
+    foreach my $target (@$list) {
+
+        if (mounted($target)) {
+            print STDERR "autosshfs: mounted $target on "
+                . get_local($config, $target) . "\n";
+
+        } else {
+            print STDERR "autosshfs: failed to mount $target :-(\n";
+        }
+    }
 }
 
 sub __disconnect {
     my ($options, $config, $list) = @_;
 
-    die "Not implemented";
+    foreach my $target (@$list) {
+        mounted($target) or do {
+            $options->{'verbose'} and print STDERR "autosshfs: cannot "
+                . "disconnect ${target}: not mounted.\n";
+            next;
+        };
+        my $local = get_local($config, $target);
+        system("fusermount", "-u", $local);
+        mounted($target) and print STDERR "autosshfs: failed to umount $target "
+            . "mounted on $local\n";
+    }
 }
 
 sub connect_targets {
     my ($options, $config) = @_;
+
+    same_arrays($options->{'connect'}, [&ALL_TARGETS]) and do {
+        @{ $options->{'connect'} } = ();
+
+        foreach my $target (sort keys %$config) {
+            $target eq &GENERIC_HOST and next;
+
+            (defined $config->{$target}->{'autosshfs'}->{'Excludefromall'} and
+                lc($config->{$target}->{'autosshfs'}->{'Excludefromall'}) eq 'yes') or
+                push @{ $options->{'connect'} }, $target;
+        }
+    };
 
     __connect($options, $config, $options->{'connect'});
 }
@@ -72,11 +284,36 @@ sub connect_targets {
 sub disconnect_targets {
     my ($options, $config) = @_;
 
+    same_arrays($options->{'disconnect'}, [&ALL_TARGETS]) and do {
+        @{ $options->{'disconnect'} } = ();
+
+        foreach my $target (sort keys %$config) {
+            $target eq &GENERIC_HOST and next;
+
+            (defined $config->{$target}->{'autosshfs'}->{'Excludefromall'} and
+                lc($config->{$target}->{'autosshfs'}->{'Excludefromall'}) eq 'yes') or
+                push @{ $options->{'disconnect'} }, $target;
+        }
+    };
+
     __disconnect($options, $config, $options->{'disconnect'});
 }
 
 sub reconnect_targets {
     my ($options, $config) = @_;
+
+    # only reconnect what is connected
+    same_arrays($options->{'reconnect'}, [&ALL_TARGETS]) and do {
+        @{ $options->{'reconnect'} } = ();
+
+        foreach my $target (sort keys %$config) {
+            $target eq &GENERIC_HOST and next;
+            (defined $config->{$target}->{'autosshfs'}->{'Excludefromall'} and
+                lc($config->{$target}->{'autosshfs'}->{'Excludefromall'}) eq 'yes') and next;
+
+            mounted($target) and push @{ $options->{'reconnect'} }, $target;
+        }
+    };
 
     __disconnect($options, $config, $options->{'reconnect'});
     __connect($options, $config, $options->{'reconnect'});
