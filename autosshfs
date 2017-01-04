@@ -138,8 +138,22 @@ sub list_targets {
 
 sub list_mounts {
     my $config = shift;
+    my @mounts;
+    my $mounted = 0;
+    my $handle;
 
-    die "Not implemented yet";
+    open $handle, "<", '/proc/mounts' or die "Cannot access /proc/mounts";
+    while (<$handle>) {
+        chomp;
+        push @mounts, $_;
+    }
+    close $handle;
+
+    foreach my $target (sort keys %$config) {
+        $target eq &GENERIC_HOST and next;
+        my @mounted = grep(/\@${target}:/, @mounts);
+        scalar @mounted and print join("\n", @mounted) . "\n";
+    }
 }
 
 sub update_conn_settings {
