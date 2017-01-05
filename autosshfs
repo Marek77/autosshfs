@@ -20,7 +20,7 @@ sub usage {
 
     $message and print "$message\n\n";
     print <<"END_MESSAGE";
-Usage: $self [--file <file>] [--connect [<target>[,<target2>,...]]] [--disconnect [<target>[,<target2>,...]]] [--list] [--mounts] [--verbose] [--help]
+Usage: $self [--file <file>] [--connect [<target>[,<target2>,...]]] [--disconnect [<target>[,<target2>,...]]] [--reconnect [<target>[,<target2>,...]]] [--list] [--mounts] [--verbose] [--help]
 
     -h          : Display this help message and exit
     -f <file>   : Use the specified file instead of @{[ SSH_CONFIG ]}
