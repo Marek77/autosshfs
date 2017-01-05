@@ -11,6 +11,7 @@ A command-line tool using `~/.ssh/config` to automatically connect sshfs mountpo
 - fuse-sshfs
 - perl-File-Path
 - perl-Getopt-Long
+- perl-IO-Interactive
 
 Put `autosshfs` into `$HOME/bin` or `/usr/local/bin` and you're good to go.
 
@@ -45,6 +46,7 @@ All the directives are case-insensitive.
 These directives are ignored if they aren't in the `Host *` section.
 
 - `BaseDir`: the "root" of the sshfs "tree". Default: `$HOME/autosshfs`
+- `PromptForAll`: if `autosshfs` should ask for user's confirmation for the actions concerning 'all' targets (`--connect`, `--disconnect`, `--reconnect` without arguments). Possible values: `yes`, `no`. If set to `yes` and `autosshfs` runs in a non-interactive environment (without a tty), it will exit without performing the action. Default: `no`
 
 ### `Host <name>` section
 These directives are ignored if they aren't in the `Host <name>` section.

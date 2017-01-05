@@ -6,6 +6,7 @@ use warnings;
 use Getopt::Long;                               # rpm: perl-Getopt-Long
 use File::Path          qw /make_path/;         # rpm: perl-File-Path
 use File::Basename;                             # rpm: perl
+use IO::Interactive     qw /is_interactive/;    # rpm: perl-IO-Interactive
 
 use constant SSH_CONFIG      => "$ENV{'HOME'}/.ssh/config";
 use constant ALL_TARGETS     => '__ALL__';
@@ -237,6 +238,40 @@ sub same_arrays {
 	return $equals;
 }
 
+sub yesno {
+    my $question = shift;
+
+    print "$question [y/N]: ";
+    system "stty", "-icanon", "eol", "\001";
+    my $answer = getc(STDIN);
+    system "stty", "icanon", "eol", "^@";
+    print "\n";
+
+    return (lc($answer) eq 'y');
+}
+
+sub check_prompt_all {
+    my ($config, $action) = @_;
+
+    if ($config->{&GENERIC_HOST}->{'autosshfs'}->{'Promptforall'} and
+        lc($config->{&GENERIC_HOST}->{'autosshfs'}->{'Promptforall'}) eq 'yes' and
+        not is_interactive()) {
+        die "autosshfs: PromptForAll set to 'yes' but running in a "
+            . "non-interactive environment";
+    }
+
+    # PromptForAll not set, or set to other than 'yes': go ahead
+    ($config->{&GENERIC_HOST}->{'autosshfs'}->{'Promptforall'} and
+        lc($config->{&GENERIC_HOST}->{'autosshfs'}->{'Promptforall'}) eq 'yes') or
+        return 1;
+
+    yesno("Are you sure to $action all targets?") or do {
+            print STDERR "autosshfs: user abort.\n";
+            return 0;
+    };
+    return 1;
+}
+
 sub __connect {
     my ($options, $config, $list) = @_;
     my ($remote, $local);
@@ -303,6 +338,7 @@ sub connect_targets {
     my ($options, $config) = @_;
 
     same_arrays($options->{'connect'}, [&ALL_TARGETS]) and do {
+        check_prompt_all($config, 'connect') or return;
         @{ $options->{'connect'} } = ();
 
         foreach my $target (sort keys %$config) {
@@ -321,6 +357,7 @@ sub disconnect_targets {
     my ($options, $config) = @_;
 
     same_arrays($options->{'disconnect'}, [&ALL_TARGETS]) and do {
+        check_prompt_all($config, 'disconnect') or return;
         @{ $options->{'disconnect'} } = ();
 
         foreach my $target (sort keys %$config) {
@@ -340,6 +377,7 @@ sub reconnect_targets {
 
     # only reconnect what is connected
     same_arrays($options->{'reconnect'}, [&ALL_TARGETS]) and do {
+        check_prompt_all($config, 'reconnect') or return;
         @{ $options->{'reconnect'} } = ();
 
         foreach my $target (sort keys %$config) {
